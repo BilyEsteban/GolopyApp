@@ -1,0 +1,40 @@
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #121216;
+}
+::-webkit-scrollbar-thumb {
+    background: #2D2D35;
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #FFC72C;
+}
+
+.recipe-pattern {
+    background-color: #121216;
+    background-image: radial-gradient(#2d2d35 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    #receiptModalModal, #receiptContent, #receiptContent * {
+        visibility: visible;
+    }
+    #receiptModalModal {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        background: white !important;
+        color: black !important;
+    }
+    .no-print {
+        display: none !important;
+    }
+}
