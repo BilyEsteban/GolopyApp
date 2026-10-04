@@ -20,21 +20,29 @@
 }
 
 @media print {
-    body * {
-        visibility: hidden;
-    }
-    #receiptModalModal, #receiptContent, #receiptContent * {
-        visibility: visible;
-    }
-    #receiptModalModal {
-        position: absolute;
-        left: 0;
-        top: 0;
-        width: 100%;
-        background: white !important;
-        color: black !important;
-    }
-    .no-print {
-        display: none !important;
-    }
+    @page { size: 80mm auto; margin: 0; }
+    html, body { width: 80mm !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body * { visibility: hidden !important; }
+    #receiptModalModal, #receiptContent, #receiptContent * { visibility: visible !important; }
+    #receiptModalModal { position: absolute !important; inset: 0 auto auto 0 !important; display: block !important; width: 80mm !important; max-width: 80mm !important; height: auto !important; max-height: none !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; background: #fff !important; }
+    #receiptModalModal > div { display: block !important; width: 72mm !important; max-width: 72mm !important; height: auto !important; max-height: none !important; margin: 0 auto !important; padding: 3mm 0 !important; overflow: visible !important; border-radius: 0 !important; box-shadow: none !important; }
+    #receiptContent { width: 72mm !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; color: #000 !important; font-family: Arial, sans-serif !important; font-size: 10pt !important; }
+    #receiptContent * { color: #000 !important; }
+    #receiptContent .grid { display: grid !important; }
+    .no-print, .mobile-nav { display: none !important; }
+    img { max-width: 40mm !important; max-height: 18mm !important; object-fit: contain !important; }
+}
+
+.mobile-nav { display: none; }
+@media (max-width: 767px) {
+    body { height: 100dvh !important; overflow: hidden !important; }
+    body > aside:first-of-type { display: none; }
+    body > main { min-width: 0; width: 100%; }
+    body > main > header { padding-left: 1rem; padding-right: 1rem; }
+    body > main > header > div:last-child > div:last-child { display: none; }
+    body > aside:last-of-type:not(.hidden) { position: fixed; inset: auto 0 58px; width: 100%; height: min(48dvh, 390px); border-left: 0; border-top: 1px solid #2d2d35; }
+    #mainPosContainer { padding: 1rem; }
+    .mobile-nav { display: flex; position: fixed; z-index: 40; inset: auto 0 0; height: 58px; justify-content: space-around; align-items: center; background: #18181c; border-top: 1px solid #2d2d35; }
+    .mobile-nav button { display: flex; flex-direction: column; gap: 3px; align-items: center; color: #d1d5db; font-size: 10px; }
+    .mobile-nav button i { font-size: 17px; color: #ffc72c; }
 }

@@ -112,9 +112,11 @@ async function fetchMenu() {
 
 function renderProducts() {
     const grid = document.getElementById('productsGrid');
+    if (!grid) return;
     const searchVal = document.getElementById('searchInput').value.toLowerCase();
 
     const filtered = MENU_PRODUCTS.filter(prod => {
+        if (prod.active === false) return false;
         const matchesCat = activeCategory === 'Todos' || prod.category === activeCategory;
         const matchesSearch = prod.name.toLowerCase().includes(searchVal) ||
             prod.coreIngredients.join(' ').toLowerCase().includes(searchVal);
@@ -165,7 +167,8 @@ function addProductToOrder(productId) {
         quantity: 1,
         coreIngredients: [...product.coreIngredients],
         availableCustoms: product.customIngredients ? [...product.customIngredients] : [],
-        selectedCustoms
+        selectedCustoms,
+        taxable: product.taxable !== false
     });
 
     renderOrderList();
@@ -221,10 +224,12 @@ function renderOrderList() {
     }
 
     let subtotalAcc = 0;
+    let taxAcc = 0;
 
     container.innerHTML = currentOrder.map(item => {
         const itemTotal = item.unitPrice * item.quantity;
         subtotalAcc += itemTotal;
+        if (item.taxable) taxAcc += itemTotal * Number(settingsData?.invoice?.taxRate ?? 18) / 100;
 
         return `
             <div class="bg-golopy-cardDark border border-golopy-borderDark rounded-xl p-3 space-y-2 relative group">
@@ -278,11 +283,14 @@ function renderOrderList() {
     }).join('');
 
     checkoutBtn.disabled = false;
-    calculateTotals(subtotalAcc);
+    calculateTotals(subtotalAcc, taxAcc);
 }
 
-function calculateTotals(subtotal) {
-    const itbis = subtotal * 0.18;
+function calculateTotals(subtotal, itbis) {
+    const rate = Number(settingsData?.invoice?.taxRate ?? 18);
+    if (itbis === undefined) itbis = currentOrder.reduce((sum, item) => sum + (item.taxable ? item.unitPrice * item.quantity * rate / 100 : 0), 0);
+    const label = document.getElementById('itbisDisplay')?.previousElementSibling;
+    if (label) label.innerText = `ITBIS (${rate}%):`;
     const total = subtotal + itbis;
 
     document.getElementById('subtotalDisplay').innerText = `RD$ ${subtotal.toFixed(2)}`;
@@ -370,6 +378,17 @@ async function processCheckout() {
         if (recSubtotal) recSubtotal.innerText = `RD$ ${subtotalAcc.toFixed(2)}`;
         if (recItbis) recItbis.innerText = `RD$ ${itbis.toFixed(2)}`;
         if (recTotal) recTotal.innerText = `RD$ ${total.toFixed(2)}`;
+
+        const business = settingsData.business || {};
+        const invoice = settingsData.invoice || {};
+        const receiptHead = document.querySelector('#receiptContent .text-center.space-y-1');
+        if (receiptHead) {
+            const makeLine = (field, visible) => visible === false || !(invoice[field] || business[field]) ? '' : `<p class="text-[10px] text-gray-600">${htmlSafe(invoice[field] || business[field])}</p>`;
+            receiptHead.innerHTML = `${invoice.showLogo !== false && (invoice.logo || business.logo) ? `<img src="${htmlSafe(invoice.logo || business.logo)}" alt="Logo del comercio" class="mx-auto mb-2 max-h-14">` : ''}<h2 class="font-bebas text-3xl text-black font-bold tracking-wider">${htmlSafe(invoice.name || business.name || 'GOLOPY BURGERS')}</h2>${makeLine('additional', invoice.showAdditional)}${makeLine('rnc', invoice.showRnc)}${makeLine('address', invoice.showAddress)}${makeLine('phone', invoice.showPhone)}${makeLine('email', invoice.showEmail)}`;
+        }
+        const receiptTaxLabel = recItbis?.previousElementSibling;
+        if (receiptTaxLabel) receiptTaxLabel.innerText = `ITBIS (${Number(invoice.taxRate ?? 18)}%):`;
+        if (invoice.showItbis === false && recItbis) recItbis.innerText = '—';
 
         const itemsHTML = currentOrder.map(item => {
             const itemTotal = item.unitPrice * item.quantity;
@@ -617,7 +636,7 @@ function exportSalesCsv() {
     window.location.href = `/api/sales/export?${params.toString()}`;
 }
 
-function switchTab(tabName) {
+function switchTabLegacyImpl(tabName) {
     const navItems = ['pedidos', 'ordenes', 'recetas', 'inventario', 'informes', 'config'];
     navItems.forEach(item => {
         const el = document.getElementById(`nav-${item}`);
@@ -798,8 +817,154 @@ function switchTab(tabName) {
     }
 }
 
+let settingsData = {};
+let managedProducts = [];
+let userRecords = [];
+const switchTabLegacy = switchTabLegacyImpl;
+const htmlSafe = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fieldClass = 'mt-1 w-full rounded-xl border border-golopy-borderDark bg-golopy-bgDark px-3 py-2.5 text-sm text-white focus:outline-none focus:border-golopy-gold';
+
+function setAdminNav(tab) {
+    document.querySelectorAll('nav a[id^="nav-"]').forEach(a => {
+        a.className = a.id === `nav-${tab}`
+            ? 'flex items-center gap-3 px-4 py-3 rounded-xl bg-golopy-gold text-golopy-darkRed font-bold shadow-md transition'
+            : 'flex items-center gap-3 px-4 py-3 rounded-xl text-gray-300 hover:bg-white/10 transition';
+    });
+}
+
+function renderProductsAdmin() {
+    const query = (document.getElementById('productSearch')?.value || '').trim().toLowerCase();
+    const category = document.getElementById('productCategoryFilter')?.value || '';
+    const rows = managedProducts.filter(p => (!query || `${p.name} ${p.category}`.toLowerCase().includes(query)) && (!category || p.category === category));
+    const body = document.getElementById('productRows');
+    if (!body) return;
+    body.innerHTML = rows.map(p => `<tr class="border-t border-golopy-borderDark"><td class="px-4 py-3 font-semibold text-white">${htmlSafe(p.name)}</td><td class="px-4 py-3">${htmlSafe(p.category)}</td><td class="px-4 py-3">${formatCurrency(p.price)}</td><td class="px-4 py-3"><span class="rounded-full px-2.5 py-1 text-xs ${p.active ? 'bg-emerald-500/10 text-emerald-300' : 'bg-gray-500/10 text-gray-400'}">${p.active ? 'Activo' : 'Inactivo'}</span></td><td class="px-4 py-3">${p.taxable ? `Sí · ${Number(settingsData.invoice?.taxRate ?? 18)}%` : 'No'}</td><td class="px-4 py-3"><div class="flex gap-3"><button onclick="showProductDetails('${htmlSafe(p.id)}')" class="text-gray-300 hover:text-white font-semibold">Ver</button><button onclick="editManagedProduct('${htmlSafe(p.id)}')" class="text-golopy-gold hover:text-white font-semibold"><i class="fa-solid fa-pen mr-1"></i>Editar</button></div></td></tr>`).join('') || '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No hay productos para esos filtros.</td></tr>';
+    const select = document.getElementById('productCategoryFilter');
+    const current = select?.value;
+    if (select) select.innerHTML = `<option value="">Todas las categorías</option>${[...new Set(managedProducts.map(p => p.category))].sort().map(c => `<option value="${htmlSafe(c)}">${htmlSafe(c)}</option>`).join('')}`;
+    if (select && current) select.value = current;
+}
+
+async function loadProductsAdmin() {
+    const response = await fetch('/api/products');
+    if (!response.ok) throw new Error('No se pudo cargar el catálogo.');
+    managedProducts = await response.json();
+    renderProductsAdmin();
+}
+
+function editManagedProduct(id = '') {
+    const product = managedProducts.find(p => p.id === id) || {};
+    const form = document.getElementById('productForm');
+    if (!form) return;
+    form.innerHTML = `<input type="hidden" name="id" value="${htmlSafe(product.id || '')}"><div class="grid sm:grid-cols-2 gap-4"><label class="text-xs text-gray-400">Nombre<input required name="name" value="${htmlSafe(product.name || '')}" class="${fieldClass}"></label><label class="text-xs text-gray-400">Precio (RD$)<input required type="number" min="0" step="0.01" name="price" value="${product.price ?? ''}" class="${fieldClass}"></label><label class="text-xs text-gray-400">Categoría<input required name="category" value="${htmlSafe(product.category || '')}" placeholder="Ej. Hamburguesas" class="${fieldClass}"></label><label class="text-xs text-gray-400">Imagen (URL)<input type="url" name="image" value="${htmlSafe(product.image || '')}" class="${fieldClass}"></label><label class="text-xs text-gray-400 sm:col-span-2">Ingredientes base<input name="coreIngredients" value="${htmlSafe((product.coreIngredients || []).join(', '))}" class="${fieldClass}"></label><label class="text-xs text-gray-400 sm:col-span-2">Ingredientes opcionales<input name="customIngredients" value="${htmlSafe((product.customIngredients || []).join(', '))}" class="${fieldClass}"></label></div><div class="mt-4 flex flex-wrap gap-6 text-sm"><label class="flex items-center gap-2"><input name="taxable" type="checkbox" ${product.taxable !== false ? 'checked' : ''} class="accent-yellow-400">Aplicar ITBIS</label><label class="flex items-center gap-2"><input name="active" type="checkbox" ${product.active !== false ? 'checked' : ''} class="accent-yellow-400">Producto activo</label></div><div class="mt-5 flex justify-end gap-2"><button type="button" onclick="document.getElementById('productForm').innerHTML=''" class="rounded-xl px-4 py-2 hover:bg-white/5">Cancelar</button><button class="rounded-xl bg-golopy-gold px-5 py-2.5 font-bold text-golopy-darkRed">Guardar producto</button></div>`;
+    form.onsubmit = async event => {
+        event.preventDefault();
+        const data = new FormData(form);
+        const value = Object.fromEntries(data.entries());
+        value.price = Number(value.price);
+        value.active = data.has('active');
+        value.taxable = data.has('taxable');
+        value.coreIngredients = value.coreIngredients.split(',').map(x => x.trim()).filter(Boolean);
+        value.customIngredients = value.customIngredients.split(',').map(x => x.trim()).filter(Boolean);
+        const saved = await fetch('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(value) });
+        if (!saved.ok) { const error = await saved.json().catch(() => ({})); return alert(error.message || 'No se pudo guardar el producto.'); }
+        form.innerHTML = '';
+        await loadProductsAdmin();
+        await fetchMenu();
+    };
+}
+
+function openProductsAdmin() {
+    document.getElementById('mainPosContainer').innerHTML = `<div class="space-y-5"><div><p class="text-xs uppercase tracking-[.2em] text-golopy-gold">Catálogo</p><h2 class="font-bebas text-3xl text-white">Productos</h2></div><div class="flex flex-col gap-3 rounded-2xl border border-golopy-borderDark bg-golopy-cardDark p-4 sm:flex-row"><input id="productSearch" oninput="renderProductsAdmin()" placeholder="Buscar por nombre o categoría" class="${fieldClass} mt-0 flex-1"><select id="productCategoryFilter" onchange="renderProductsAdmin()" class="${fieldClass} mt-0 sm:max-w-xs"><option value="">Todas las categorías</option></select><button onclick="editManagedProduct()" class="shrink-0 rounded-xl bg-golopy-gold px-4 py-2.5 font-bold text-golopy-darkRed"><i class="fa-solid fa-plus mr-1"></i>Agregar producto</button></div><form id="productForm" class="rounded-2xl border border-golopy-borderDark bg-golopy-cardDark p-5"></form><div class="overflow-x-auto rounded-2xl border border-golopy-borderDark bg-golopy-cardDark"><table class="w-full min-w-[760px] text-left text-sm"><thead class="text-golopy-gold"><tr><th class="p-4">Producto</th><th class="p-4">Categoría</th><th class="p-4">Precio</th><th class="p-4">Estado</th><th class="p-4">ITBIS</th><th class="p-4">Acciones</th></tr></thead><tbody id="productRows"></tbody></table></div><div id="productDetailModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4" onclick="if(event.target===this)this.classList.add('hidden')"><div class="w-full max-w-lg rounded-2xl border border-golopy-borderDark bg-golopy-cardDark p-5 shadow-2xl"></div></div></div>`;
+    loadProductsAdmin().catch(error => alert(error.message));
+}
+
+function showProductDetails(id) {
+    const product = managedProducts.find(item => item.id === id);
+    const modal = document.getElementById('productDetailModal');
+    if (!product || !modal) return;
+    modal.querySelector('div').innerHTML = `<div class="mb-4 flex items-start justify-between"><div><p class="text-xs uppercase tracking-widest text-golopy-gold">Detalle del producto</p><h3 class="mt-1 text-2xl font-bold text-white">${htmlSafe(product.name)}</h3></div><button onclick="document.getElementById('productDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button></div>${product.image ? `<img src="${htmlSafe(product.image)}" alt="${htmlSafe(product.name)}" class="mb-4 h-44 w-full rounded-xl object-cover">` : ''}<dl class="grid grid-cols-2 gap-3 text-sm"><div><dt class="text-gray-400">Precio</dt><dd class="mt-1 font-bold text-golopy-gold">${formatCurrency(product.price)}</dd></div><div><dt class="text-gray-400">Categoría</dt><dd class="mt-1 text-white">${htmlSafe(product.category)}</dd></div><div><dt class="text-gray-400">Estado</dt><dd class="mt-1 text-white">${product.active ? 'Activo' : 'Inactivo'}</dd></div><div><dt class="text-gray-400">ITBIS</dt><dd class="mt-1 text-white">${product.taxable ? `Aplicado (${Number(settingsData.invoice?.taxRate ?? 18)}%)` : 'Sin ITBIS'}</dd></div><div class="col-span-2"><dt class="text-gray-400">Ingredientes base</dt><dd class="mt-1 text-white">${htmlSafe((product.coreIngredients || []).join(', ') || '—')}</dd></div><div class="col-span-2"><dt class="text-gray-400">Ingredientes opcionales</dt><dd class="mt-1 text-white">${htmlSafe((product.customIngredients || []).join(', ') || '—')}</dd></div></dl>`;
+    modal.classList.remove('hidden'); modal.classList.add('flex');
+}
+
+function settingsSection(section) {
+    const host = document.getElementById('settingsSection');
+    if (!host) return;
+    if (section === 'users') return openUsersAdmin(host);
+    const value = settingsData[section] || {};
+    const fields = [['name','Nombre del comercio'],['address','Dirección'],['phone','Teléfono'],['email','Correo electrónico'],['rnc','RNC'],['logo','Logo (URL)'],['additional','Información adicional']];
+    host.innerHTML = `<h3 class="text-xl font-bold text-white">${section === 'business' ? 'Perfil del comercio' : 'Configuración de facturas'}</h3><p class="mb-5 mt-1 text-sm text-gray-400">${section === 'business' ? 'Datos del negocio para completar tus comprobantes.' : 'Elige la información que aparecerá en cada factura.'}</p><form id="settingsForm" class="grid gap-4 sm:grid-cols-2">${fields.map(([key,label]) => `<label class="text-xs text-gray-400 ${key === 'additional' ? 'sm:col-span-2' : ''}">${label}${key === 'additional' ? `<textarea name="${key}" rows="3" class="${fieldClass}">${htmlSafe(value[key] || '')}</textarea>` : `<input name="${key}" value="${htmlSafe(value[key] || '')}" class="${fieldClass}">`}</label>`).join('')}${section === 'invoice' ? `<div class="grid gap-3 text-sm sm:col-span-2 sm:grid-cols-2">${[['showAddress','Mostrar dirección'],['showPhone','Mostrar teléfono'],['showEmail','Mostrar correo'],['showRnc','Mostrar RNC'],['showLogo','Mostrar logo'],['showAdditional','Mostrar información adicional'],['showItbis','Mostrar ITBIS']].map(([key,label]) => `<label class="flex items-center gap-2"><input name="${key}" type="checkbox" ${value[key] !== false ? 'checked' : ''} class="accent-yellow-400">${label}</label>`).join('')}<label class="text-xs text-gray-400">Tasa ITBIS (%)<input name="taxRate" type="number" min="0" max="100" step="0.01" value="${Number(value.taxRate ?? 18)}" class="${fieldClass}"></label><p class="text-xs text-gray-500 sm:col-span-2">La tasa configurada se aplica solo a los productos marcados como gravados.</p></div>` : ''}<div class="flex justify-end sm:col-span-2"><button class="rounded-xl bg-golopy-gold px-5 py-2.5 font-bold text-golopy-darkRed">Guardar configuración</button></div></form>`;
+    document.getElementById('settingsForm').onsubmit = async event => {
+        event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const value = Object.fromEntries(data.entries());
+        if (section === 'invoice') { ['showAddress','showPhone','showEmail','showRnc','showLogo','showAdditional','showItbis'].forEach(key => value[key] = data.has(key)); value.taxRate = Number(value.taxRate || 18); }
+        settingsData[section] = value;
+        const response = await fetch('/api/settings', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ [section]:value }) });
+        if (!response.ok) return alert('No se pudo guardar la configuración.');
+        calculateTotals(currentOrder.reduce((sum,item) => sum + item.unitPrice * item.quantity, 0));
+        alert('Configuración guardada.');
+    };
+}
+
+async function openUsersAdmin(host) {
+    try {
+        userRecords = await (await fetch('/api/users')).json();
+        host.innerHTML = `<div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h3 class="text-xl font-bold text-white">Usuarios</h3><p class="text-sm text-gray-400">Gestiona roles, permisos y estado.</p></div><button onclick="editManagedUser()" class="rounded-xl bg-golopy-gold px-4 py-2.5 font-bold text-golopy-darkRed"><i class="fa-solid fa-plus mr-1"></i>Agregar usuario</button></div><form id="userForm" class="mb-4 hidden rounded-xl bg-black/20 p-4"></form><div class="overflow-x-auto"><table class="w-full min-w-[620px] text-left text-sm"><thead class="text-golopy-gold"><tr><th class="p-3">Nombre</th><th class="p-3">Correo</th><th class="p-3">Rol</th><th class="p-3">Estado</th><th class="p-3">Acción</th></tr></thead><tbody>${userRecords.map(user => `<tr class="border-t border-golopy-borderDark"><td class="p-3 text-white">${htmlSafe(user.name)}</td><td class="p-3">${htmlSafe(user.email)}</td><td class="p-3">${htmlSafe(user.role)}</td><td class="p-3">${user.active ? 'Activo' : 'Inactivo'}</td><td class="p-3"><button onclick="editManagedUser(${user.id})" class="font-semibold text-golopy-gold">Editar</button></td></tr>`).join('') || '<tr><td colspan="5" class="p-5 text-gray-400">Aún no hay usuarios.</td></tr>'}</tbody></table></div><p class="mt-4 text-xs text-gray-500">Esta versión registra permisos por usuario; el sistema todavía no cuenta con inicio de sesión para aplicarlos durante la navegación.</p>`;
+    } catch (error) { host.innerHTML = '<p class="text-red-300">No se pudieron cargar los usuarios.</p>'; }
+}
+
+function editManagedUser(id = '') {
+    const user = userRecords.find(item => item.id === id) || {};
+    const form = document.getElementById('userForm'); if (!form) return;
+    const modules = ['pedidos','productos','órdenes','inventario','informes','configuración'];
+    form.classList.remove('hidden');
+    form.innerHTML = `<input type="hidden" name="id" value="${user.id || ''}"><div class="grid gap-3 sm:grid-cols-2"><label class="text-xs text-gray-400">Nombre<input required name="name" value="${htmlSafe(user.name || '')}" class="${fieldClass}"></label><label class="text-xs text-gray-400">Correo<input required type="email" name="email" value="${htmlSafe(user.email || '')}" class="${fieldClass}"></label><label class="text-xs text-gray-400">Rol<select name="role" class="${fieldClass}">${['Administrador','Gerente','Cajero'].map(role => `<option ${user.role === role ? 'selected' : ''}>${role}</option>`).join('')}</select></label><label class="flex items-center gap-2 text-sm"><input name="active" type="checkbox" ${user.active !== false ? 'checked' : ''} class="accent-yellow-400"> Usuario activo</label></div><p class="mb-2 mt-4 text-sm">Permisos por sección</p><div class="grid grid-cols-[1fr_auto_auto] gap-x-5 gap-y-2 text-sm"><span class="text-gray-500">Sección</span><span class="text-gray-500">Ver</span><span class="text-gray-500">Editar</span>${modules.map((module,index) => { const permission = user.permissions?.[module]; const canView = typeof permission === 'object' ? permission.view !== false : permission !== false; const canEdit = typeof permission === 'object' ? permission.edit === true : permission !== false; return `<span class="capitalize">${module}</span><input aria-label="Ver ${module}" name="view_${index}" type="checkbox" ${canView ? 'checked' : ''} class="accent-yellow-400"><input aria-label="Editar ${module}" name="edit_${index}" type="checkbox" ${canEdit ? 'checked' : ''} class="accent-yellow-400">`; }).join('')}</div><div class="mt-4 flex justify-end gap-2"><button type="button" onclick="this.closest('form').classList.add('hidden')" class="rounded-xl px-4 py-2">Cancelar</button><button class="rounded-xl bg-golopy-gold px-4 py-2 font-bold text-golopy-darkRed">Guardar usuario</button></div>`;
+    form.onsubmit = async event => {
+        event.preventDefault(); const data = new FormData(form); const value = Object.fromEntries(data.entries()); value.id = value.id ? Number(value.id) : undefined; value.active = data.has('active'); value.permissions = Object.fromEntries(modules.map((module,index) => [module,{ view:data.has(`view_${index}`), edit:data.has(`edit_${index}`) }]));
+        const response = await fetch('/api/users', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(value) });
+        if (!response.ok) { const error = await response.json().catch(() => ({})); return alert(error.message || 'No se pudo guardar el usuario.'); }
+        openUsersAdmin(form.parentElement);
+    };
+}
+
+async function openSettingsAdmin() {
+    try { settingsData = await (await fetch('/api/settings')).json(); } catch { settingsData = {}; }
+    document.getElementById('mainPosContainer').innerHTML = `<div class="space-y-5"><div><p class="text-xs uppercase tracking-[.2em] text-golopy-gold">Preferencias del sistema</p><h2 class="font-bebas text-3xl text-white">Configuración</h2></div><div class="flex flex-wrap gap-2"><button class="settings-tab" onclick="settingsSection('business')">Perfil del comercio</button><button class="settings-tab" onclick="settingsSection('invoice')">Facturas</button><button class="settings-tab" onclick="settingsSection('users')">Usuarios</button></div><section id="settingsSection" class="rounded-2xl border border-golopy-borderDark bg-golopy-cardDark p-5"></section></div>`;
+    settingsSection('business');
+}
+
+function switchTab(tabName) {
+    const summary = document.querySelector('body > aside:last-of-type');
+    if (summary) summary.classList.toggle('hidden', tabName !== 'pedidos');
+    if (tabName === 'productos') { setAdminNav(tabName); openProductsAdmin(); return; }
+    if (tabName === 'config') { setAdminNav(tabName); openSettingsAdmin(); return; }
+    switchTabLegacy(tabName);
+    setAdminNav(tabName);
+}
+
+const tabPaths = { pedidos:'/', ordenes:'/ordenes', productos:'/productos', inventario:'/inventario', informes:'/informes', config:'/configuracion' };
+const pathTabs = Object.fromEntries(Object.entries(tabPaths).map(([tab,path]) => [path,tab]));
+function navigateToTab(tabName) {
+    const path = tabPaths[tabName] || '/';
+    if (window.location.pathname !== path) history.pushState({ tabName }, '', path);
+    switchTab(tabName);
+    return false;
+}
+window.addEventListener('popstate', () => switchTab(pathTabs[window.location.pathname] || 'pedidos'));
+
 window.onload = async function() {
+    try { settingsData = await (await fetch('/api/settings')).json(); } catch { settingsData = {}; }
     await fetchMenu();
+    const initialTab = pathTabs[window.location.pathname] || 'pedidos';
+    if (initialTab !== 'pedidos') switchTab(initialTab);
     updateClock();
     setInterval(updateClock, 1000);
 };
+
+const adminStyles = document.createElement('style');
+adminStyles.textContent = '.settings-tab{padding:.65rem 1rem;border-radius:.75rem;background:#1e1e24;border:1px solid #2d2d35;color:#eee}.settings-tab:hover{border-color:#ffc72c}';
+document.head.appendChild(adminStyles);
+
+function printReceipt() {
+    if (!document.getElementById('receiptContent')) return alert('No receipt content found.');
+    window.print();
+}

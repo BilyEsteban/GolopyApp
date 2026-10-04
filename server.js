@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const { ensureDatabase, getProducts, createOrder, getSalesHistory, buildSalesCsv, getDetailedOrders, getTopSellingProducts } = require('./db');
+const { ensureDatabase, getProducts, createOrder, getSalesHistory, buildSalesCsv, getDetailedOrders, getTopSellingProducts, saveProduct, getSettings, saveSettings, getUsers, saveUser } = require('./db');
 
 const app = express();
 const preferredPort = Number(process.env.PORT) || 3001;
@@ -21,6 +21,42 @@ app.get('/api/menu', async (req, res) => {
     console.error('Error al consultar productos:', error);
     res.status(500).json({ ok: false, message: 'No se pudo obtener el menú.' });
   }
+});
+
+app.get('/api/products', async (req, res) => {
+  try { res.json(await getProducts()); }
+  catch (error) { console.error(error); res.status(500).json({ message: 'No se pudieron cargar los productos.' }); }
+});
+
+app.post('/api/products', async (req, res) => {
+  const { name, price, category } = req.body || {};
+  if (!name?.trim() || !category?.trim() || !Number.isFinite(Number(price)) || Number(price) < 0) {
+    return res.status(400).json({ message: 'Nombre, categoría y precio válido son obligatorios.' });
+  }
+  try { res.json(await saveProduct(req.body)); }
+  catch (error) { console.error(error); res.status(500).json({ message: 'No se pudo guardar el producto.' }); }
+});
+
+app.get('/api/settings', async (req, res) => {
+  try { res.json(await getSettings()); }
+  catch (error) { console.error(error); res.status(500).json({ message: 'No se pudo cargar la configuración.' }); }
+});
+
+app.put('/api/settings', async (req, res) => {
+  try { res.json(await saveSettings(req.body || {})); }
+  catch (error) { console.error(error); res.status(500).json({ message: 'No se pudo guardar la configuración.' }); }
+});
+
+app.get('/api/users', async (req, res) => {
+  try { res.json(await getUsers()); }
+  catch (error) { console.error(error); res.status(500).json({ message: 'No se pudieron cargar los usuarios.' }); }
+});
+
+app.post('/api/users', async (req, res) => {
+  const { name, email } = req.body || {};
+  if (!name?.trim() || !email?.trim()) return res.status(400).json({ message: 'Nombre y correo son obligatorios.' });
+  try { res.json(await saveUser(req.body)); }
+  catch (error) { console.error(error); res.status(400).json({ message: 'No se pudo guardar el usuario. Verifica que el correo no esté duplicado.' }); }
 });
 
 app.post('/api/orders', async (req, res) => {
@@ -59,6 +95,13 @@ app.get('/api/sales/export', async (req, res) => {
       startDate: req.query.startDate,
       endDate: req.query.endDate
     });
+
+    if (req.query.format === 'json') {
+      const fileName = `ventas-${Date.now()}.json`;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      return res.send(JSON.stringify(rows, null, 2));
+    }
 
     const csv = buildSalesCsv(rows);
     const fileName = `ventas-${Date.now()}.csv`;
@@ -101,7 +144,7 @@ app.get('/api/products/top-selling', async (req, res) => {
   }
 });
 
-app.get('/', (req, res) => {
+app.get(['/', '/ordenes', '/productos', '/inventario', '/informes', '/configuracion'], (req, res) => {
   res.sendFile(path.join(__dirname, 'Index.html'));
 });
 

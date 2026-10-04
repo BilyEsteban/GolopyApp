@@ -128,6 +128,19 @@ async function ensureDatabase() {
     )
   `);
 
+  const columns = await runQuery('PRAGMA table_info(products)');
+  if (!columns.some((column) => column.name === 'active')) await runExec('ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+  if (!columns.some((column) => column.name === 'taxable')) await runExec('ALTER TABLE products ADD COLUMN taxable INTEGER NOT NULL DEFAULT 1');
+  await runExec('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  await runExec(`CREATE TABLE IF NOT EXISTS app_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'Cajero',
+    active INTEGER NOT NULL DEFAULT 1,
+    permissions TEXT NOT NULL DEFAULT '{}'
+  )`);
+
   await runExec(`
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,13 +189,63 @@ async function getProducts() {
     category: row.category,
     image: row.image,
     coreIngredients: row.coreIngredients ? row.coreIngredients.split(',') : [],
-    customIngredients: row.customIngredients ? row.customIngredients.split(',').filter(Boolean) : []
+    customIngredients: row.customIngredients ? row.customIngredients.split(',').filter(Boolean) : [],
+    active: row.active !== 0,
+    taxable: row.taxable !== 0
   }));
 }
 
+async function saveProduct(product) {
+  const id = product.id || `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const list = (value) => Array.isArray(value) ? value.join(',') : String(value || '');
+  await runExec(`INSERT INTO products (id,name,price,category,image,coreIngredients,customIngredients,active,taxable)
+    VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    name=excluded.name,price=excluded.price,category=excluded.category,image=excluded.image,
+    coreIngredients=excluded.coreIngredients,customIngredients=excluded.customIngredients,
+    active=excluded.active,taxable=excluded.taxable`, [
+    id, product.name, Number(product.price), product.category, product.image || '',
+    list(product.coreIngredients), list(product.customIngredients), product.active === false ? 0 : 1,
+    product.taxable === false ? 0 : 1
+  ]);
+  return (await getProducts()).find((item) => item.id === id);
+}
+
+async function getSettings() {
+  const rows = await runQuery('SELECT key,value FROM app_settings');
+  return rows.reduce((result, row) => {
+    try { result[row.key] = JSON.parse(row.value); } catch { result[row.key] = row.value; }
+    return result;
+  }, {});
+}
+
+async function saveSettings(settings) {
+  for (const [key, value] of Object.entries(settings)) {
+    await runExec('INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, JSON.stringify(value)]);
+  }
+  return getSettings();
+}
+
+async function getUsers() {
+  const rows = await runQuery('SELECT id,name,email,role,active,permissions FROM app_users ORDER BY name');
+  return rows.map((row) => ({ ...row, active: row.active !== 0, permissions: (() => { try { return JSON.parse(row.permissions || '{}'); } catch { return {}; } })() }));
+}
+
+async function saveUser(user) {
+  const fields = [user.name, user.email, user.role || 'Cajero', user.active === false ? 0 : 1, JSON.stringify(user.permissions || {})];
+  if (user.id) await runExec('UPDATE app_users SET name=?,email=?,role=?,active=?,permissions=? WHERE id=?', [...fields, user.id]);
+  else await runExec('INSERT INTO app_users(name,email,role,active,permissions) VALUES(?,?,?,?,?)', fields);
+  return getUsers();
+}
+
 async function createOrder({ customer, orderType, items }) {
+  const products = await getProducts();
+  const settings = await getSettings();
+  const taxRate = Number(settings.invoice?.taxRate ?? 18) / 100;
   const subtotal = items.reduce((total, item) => total + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0);
-  const itbis = subtotal * 0.18;
+  const itbis = items.reduce((total, item) => {
+    const product = products.find((entry) => entry.id === (item.productId || item.id));
+    return total + (product?.taxable ? Number(item.unitPrice || 0) * Number(item.quantity || 0) * taxRate : 0);
+  }, 0);
   const total = subtotal + itbis;
   const receiptNumber = `ORD-${Date.now().toString().slice(-6)}`;
 
@@ -393,5 +456,10 @@ module.exports = {
   getDetailedOrders,
   getTopSellingProducts,
   buildSalesCsv,
+  saveProduct,
+  getSettings,
+  saveSettings,
+  getUsers,
+  saveUser,
   db
 };

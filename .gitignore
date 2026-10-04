@@ -1,1 +1,4 @@
-/golopy.db
+/node_modules/
+/golopy.db-wal
+/golopy.db-shm
+/golopy.db-journal
