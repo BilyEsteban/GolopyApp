@@ -344,8 +344,8 @@ async function getDetailedOrders({ search = '', startDate = '', endDate = '' } =
   const params = [];
 
   if (search) {
-    sql += ' AND o.receipt_number LIKE ?';
-    params.push(`%${search}%`);
+    sql += ' AND (o.receipt_number LIKE ? OR o.customer LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`);
   }
 
   if (startDate) {

@@ -91,6 +91,10 @@ const FALLBACK_MENU_PRODUCTS = [
 
 let MENU_PRODUCTS = [...FALLBACK_MENU_PRODUCTS];
 let currentOrder = [];
+let detailedOrdersCache = [];
+let orderSearchTimer = null;
+let ordersSearchRequest = 0;
+let historicalReceipt = false;
 let activeCategory = 'Todos';
 let orderCounter = 1;
 
@@ -384,7 +388,8 @@ async function processCheckout() {
         const receiptHead = document.querySelector('#receiptContent .text-center.space-y-1');
         if (receiptHead) {
             const makeLine = (field, visible) => visible === false || !(invoice[field] || business[field]) ? '' : `<p class="text-[10px] text-gray-600">${htmlSafe(invoice[field] || business[field])}</p>`;
-            receiptHead.innerHTML = `${invoice.showLogo !== false && (invoice.logo || business.logo) ? `<img src="${htmlSafe(invoice.logo || business.logo)}" alt="Logo del comercio" class="mx-auto mb-2 max-h-14">` : ''}<h2 class="font-bebas text-3xl text-black font-bold tracking-wider">${htmlSafe(invoice.name || business.name || 'GOLOPY BURGERS')}</h2>${makeLine('additional', invoice.showAdditional)}${makeLine('rnc', invoice.showRnc)}${makeLine('address', invoice.showAddress)}${makeLine('phone', invoice.showPhone)}${makeLine('email', invoice.showEmail)}`;
+            const logo = invoice.logo || business.logo || './assets/images/golopylogo2.png';
+            receiptHead.innerHTML = `${invoice.showLogo !== false && logo ? `<img src="${htmlSafe(logo)}" alt="Golopy logo" class="mx-auto mb-2 max-h-28">` : ''}<h2 class="font-bebas text-3xl text-black font-bold tracking-wider">${htmlSafe(invoice.name || business.name || 'GOLOPY BURGERS')}</h2>${makeLine('additional', invoice.showAdditional)}${makeLine('rnc', invoice.showRnc)}${makeLine('address', invoice.showAddress)}${makeLine('phone', invoice.showPhone)}${makeLine('email', invoice.showEmail)}`;
         }
         const receiptTaxLabel = recItbis?.previousElementSibling;
         if (receiptTaxLabel) receiptTaxLabel.innerText = `ITBIS (${Number(invoice.taxRate ?? 18)}%):`;
@@ -425,11 +430,17 @@ function closeReceiptModal(isNewOrder = false) {
     if (modal) {
         modal.classList.add('hidden');
     }
-    if (isNewOrder) {
+    if (isNewOrder && !historicalReceipt) {
         orderCounter++;
         const orderDisplay = document.getElementById('orderNumberDisplay');
         if (orderDisplay) orderDisplay.innerText = `ORD-00${orderCounter}`;
         clearCurrentOrder();
+    }
+    historicalReceipt = false;
+    const closeButton = document.getElementById('receiptNewOrderBtn');
+    if (closeButton) {
+        closeButton.innerText = 'Nueva Orden';
+        closeButton.onclick = () => closeReceiptModal(true);
     }
 }
 
@@ -460,7 +471,8 @@ function formatCurrency(value) {
 }
 
 async function fetchDetailedOrders() {
-    const search = document.getElementById('orderSearch')?.value || '';
+    const requestId = ++ordersSearchRequest;
+    const search = document.getElementById('orderSearch')?.value.trim() || '';
     const startDate = document.getElementById('orderStartDate')?.value || '';
     const endDate = document.getElementById('orderEndDate')?.value || '';
 
@@ -473,11 +485,56 @@ async function fetchDetailedOrders() {
         const response = await fetch(`/api/orders/detail?${params.toString()}`);
         if (!response.ok) throw new Error('No se pudo cargar el detalle de órdenes');
         const data = await response.json();
-        renderDetailedOrders(Array.isArray(data) ? data : []);
+        if (requestId !== ordersSearchRequest) return;
+        detailedOrdersCache = Array.isArray(data) ? data : [];
+        renderDetailedOrders(detailedOrdersCache);
     } catch (error) {
+        if (requestId !== ordersSearchRequest) return;
         console.error(error);
         renderDetailedOrders([]);
     }
+}
+
+function scheduleOrdersSearch() {
+    clearTimeout(orderSearchTimer);
+    orderSearchTimer = setTimeout(fetchDetailedOrders, 250);
+}
+
+function reprintOrder(orderId) {
+    const order = detailedOrdersCache.find(row => Number(row.id) === Number(orderId));
+    if (!order) return alert('No se encontró la orden. Actualiza el listado e inténtalo de nuevo.');
+
+    const invoice = settingsData.invoice || {};
+    const business = settingsData.business || {};
+    const logo = invoice.logo || business.logo || './assets/images/golopylogo2.png';
+    const receiptHead = document.querySelector('#receiptContent .text-center.space-y-1');
+    const makeLine = (field, visible) => visible === false || !(invoice[field] || business[field]) ? '' : `<p class="text-[10px] text-gray-600">${htmlSafe(invoice[field] || business[field])}</p>`;
+    if (receiptHead) {
+        receiptHead.innerHTML = `${invoice.showLogo !== false && logo ? `<img src="${htmlSafe(logo)}" alt="Logo del comercio" class="mx-auto mb-2 max-h-28">` : ''}<h2 class="font-bebas text-3xl text-black font-bold tracking-wider">${htmlSafe(invoice.name || business.name || 'GOLOPY BURGERS')}</h2>${makeLine('additional', invoice.showAdditional)}${makeLine('rnc', invoice.showRnc)}${makeLine('address', invoice.showAddress)}${makeLine('phone', invoice.showPhone)}${makeLine('email', invoice.showEmail)}`;
+    }
+    document.getElementById('recNum').innerText = order.receipt_number;
+    document.getElementById('recDate').innerText = new Date(order.created_at).toLocaleString('es-DO');
+    document.getElementById('recCustomer').innerText = order.customer || 'Cliente General';
+    document.getElementById('recType').innerText = order.order_type || 'Para Llevar';
+    document.getElementById('recSubtotal').innerText = formatCurrency(order.subtotal);
+    document.getElementById('recItbis').innerText = invoice.showItbis === false ? '—' : formatCurrency(order.itbis);
+    document.getElementById('recTotal').innerText = formatCurrency(order.total);
+    const taxLabel = document.getElementById('recItbis')?.previousElementSibling;
+    if (taxLabel) taxLabel.innerText = `ITBIS (${Number(invoice.taxRate ?? 18)}%):`;
+    document.getElementById('receiptItemsList').innerHTML = order.items.map(item => `
+        <div class="grid grid-cols-12 py-1 border-b border-gray-100">
+            <span class="col-span-2 font-bold">${Number(item.quantity)}x</span>
+            <div class="col-span-6"><span class="font-bold">${htmlSafe(item.product_name)}</span>${item.selected_customs?.length ? `<div class="text-[9px] text-gray-600">${htmlSafe(item.selected_customs.join(', '))}</div>` : ''}</div>
+            <span class="col-span-4 text-right">${formatCurrency(item.item_total)}</span>
+        </div>`).join('');
+
+    historicalReceipt = true;
+    const closeButton = document.getElementById('receiptNewOrderBtn');
+    if (closeButton) {
+        closeButton.innerText = 'Cerrar';
+        closeButton.onclick = () => closeReceiptModal();
+    }
+    showReceiptModal();
 }
 
 function renderDetailedOrders(rows) {
@@ -495,16 +552,16 @@ function renderDetailedOrders(rows) {
 
     tableBody.innerHTML = rows.map((order) => `
         <tr class="align-top border-b border-golopy-borderDark text-sm">
-            <td class="px-4 py-3 text-golopy-gold font-bold">${order.receipt_number}</td>
-            <td class="px-4 py-3 text-gray-200">${order.customer}</td>
-            <td class="px-4 py-3 text-gray-300">${order.order_type}</td>
+            <td class="px-4 py-3 text-golopy-gold font-bold">${htmlSafe(order.receipt_number)}</td>
+            <td class="px-4 py-3 text-gray-200">${htmlSafe(order.customer)}</td>
+            <td class="px-4 py-3 text-gray-300">${htmlSafe(order.order_type)}</td>
             <td class="px-4 py-3 text-gray-300">
                 <div class="space-y-1">
                     ${order.items.map(item => `
                         <div class="rounded-lg bg-black/10 px-2 py-1">
-                            <span class="font-medium text-white">${item.product_name}</span>
+                            <span class="font-medium text-white">${htmlSafe(item.product_name)}</span>
                             <span class="text-gray-400"> x${item.quantity}</span>
-                            ${item.selected_customs.length ? `<div class="text-[10px] text-golopy-gold">${item.selected_customs.join(', ')}</div>` : ''}
+                            ${item.selected_customs.length ? `<div class="text-[10px] text-golopy-gold">${htmlSafe(item.selected_customs.join(', '))}</div>` : ''}
                         </div>
                     `).join('') || '<span class="text-gray-500">Sin items</span>'}
                 </div>
@@ -512,6 +569,7 @@ function renderDetailedOrders(rows) {
             <td class="px-4 py-3 text-gray-300">${formatCurrency(order.subtotal)}</td>
             <td class="px-4 py-3 text-gray-300">${formatCurrency(order.total)}</td>
             <td class="px-4 py-3 text-gray-300">${new Date(order.created_at).toLocaleString('es-DO')}</td>
+            <td class="px-4 py-3"><button onclick="reprintOrder(${Number(order.id)})" class="rounded-lg bg-golopy-gold px-3 py-2 text-xs font-bold text-golopy-darkRed hover:bg-golopy-goldHover"><i class="fa-solid fa-print mr-1"></i>Imprimir</button></td>
         </tr>
     `).join('');
 }
@@ -744,8 +802,8 @@ function switchTabLegacyImpl(tabName) {
                         </div>
                         <div class="flex flex-col sm:flex-row gap-3">
                             <div class="flex flex-col text-xs text-gray-400">
-                                <label for="orderSearch">N° de orden</label>
-                                <input id="orderSearch" type="text" placeholder="Buscar ORD-..." class="mt-1 bg-golopy-bgDark border border-golopy-borderDark rounded-lg px-3 py-2 text-white focus:outline-none focus:border-golopy-gold">
+                                <label for="orderSearch">Cliente o N° de orden</label>
+                                <input id="orderSearch" type="text" oninput="scheduleOrdersSearch()" placeholder="Escribe un cliente o ORD-..." class="mt-1 bg-golopy-bgDark border border-golopy-borderDark rounded-lg px-3 py-2 text-white focus:outline-none focus:border-golopy-gold">
                             </div>
                             <div class="flex flex-col text-xs text-gray-400">
                                 <label for="orderStartDate">Desde</label>
@@ -776,6 +834,7 @@ function switchTabLegacyImpl(tabName) {
                                     <th class="px-4 py-3">Subtotal</th>
                                     <th class="px-4 py-3">Total</th>
                                     <th class="px-4 py-3">Fecha</th>
+                                    <th class="px-4 py-3">Acción</th>
                                 </tr>
                             </thead>
                             <tbody id="ordersTableBody" class="divide-y divide-golopy-borderDark"></tbody>
@@ -964,7 +1023,30 @@ const adminStyles = document.createElement('style');
 adminStyles.textContent = '.settings-tab{padding:.65rem 1rem;border-radius:.75rem;background:#1e1e24;border:1px solid #2d2d35;color:#eee}.settings-tab:hover{border-color:#ffc72c}';
 document.head.appendChild(adminStyles);
 
-function printReceipt() {
-    if (!document.getElementById('receiptContent')) return alert('No receipt content found.');
+async function printReceipt() {
+    const receipt = document.getElementById('receiptContent');
+    if (!receipt) return alert('No receipt content found.');
+
+    // Wait for the configured business logo to finish loading before opening
+    // the browser's print dialog; otherwise some browsers omit it from print.
+    const images = Array.from(receipt.querySelectorAll('img'));
+    const results = await Promise.all(images.map(async image => {
+        if (!image.complete) {
+            await new Promise(resolve => {
+                image.addEventListener('load', resolve, { once: true });
+                image.addEventListener('error', resolve, { once: true });
+                setTimeout(resolve, 5000);
+            });
+        }
+        if (image.complete && image.naturalWidth > 0 && typeof image.decode === 'function') {
+            try { await image.decode(); } catch { /* handled by the validation below */ }
+        }
+        return image.naturalWidth > 0;
+    }));
+
+    if (results.some(loaded => !loaded)) {
+        return alert('No se pudo cargar el logo de la factura. Verifica que la URL de la imagen sea accesible y vuelve a imprimir.');
+    }
     window.print();
+    if (!historicalReceipt) closeReceiptModal(true);
 }

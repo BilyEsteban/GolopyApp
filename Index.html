@@ -42,12 +42,13 @@
     <aside class="w-64 bg-golopy-darkRed border-r border-golopy-borderDark/40 flex flex-col justify-between z-20 shrink-0">
         <div>
             <div class="p-5 flex items-center gap-3 border-b border-white/10 bg-black/20">
-                <div class="bg-golopy-gold text-golopy-darkRed font-bebas text-3xl px-3 py-1 rounded-lg flex items-center justify-center shadow-lg font-bold">
-                    <i class="fa-solid fa-house-burgers text-2xl mr-1"></i> G
+                <div class=" flex items-center justify-center shadow-lg font-bold">
+                    <!-- <i class="fa-solid fa-house-burgers text-2xl mr-1"></i> G -->
+                    <img src="./assets/images/golopylogo2.png" alt="Golopy logo" class="mx-auto w-20">
                 </div>
                 <div>
                     <h1 class="font-bebas text-3xl tracking-wide text-golopy-gold leading-none">GOLOPY</h1>
-                    <p class="text-[10px] text-gray-300 tracking-widest uppercase font-semibold">Burger System POS</p>
+                    <p class="text-[10px] text-gray-300 tracking-widest uppercase font-semibold">Burger</p>
                 </div>
             </div>
 
@@ -224,6 +225,7 @@
 
             <div id="receiptContent" class="p-6 overflow-y-auto text-xs font-mono space-y-4">
                 <div class="text-center space-y-1 pb-3 border-b border-dashed border-gray-400">
+                    <img src="./assets/images/golopylogo2.png" alt="Golopy logo" class="mx-auto w-40">
                     <h2 class="font-bebas text-3xl text-black font-bold tracking-wider">GOLOPY BURGERS</h2>
                     <p class="text-[10px] text-gray-600">SABOR PREMIUM & CALIDAD</p>
                     <p class="text-[10px] text-gray-600">RNC: 131-998877-1</p>
@@ -266,7 +268,7 @@
                 <button onclick="printReceipt()" class="flex-1 bg-golopy-darkRed hover:bg-golopy-brightRed text-white py-2.5 rounded-xl font-bold transition flex items-center justify-center gap-2">
                     <i class="fa-solid fa-print"></i> Imprimir Ticket
                 </button>
-                <button onclick="closeReceiptModal(true)" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2.5 rounded-xl font-bold transition">
+                <button id="receiptNewOrderBtn" onclick="closeReceiptModal(true)" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2.5 rounded-xl font-bold transition">
                     Nueva Orden
                 </button>
             </div>

@@ -30,7 +30,7 @@
     #receiptContent * { color: #000 !important; }
     #receiptContent .grid { display: grid !important; }
     .no-print, .mobile-nav { display: none !important; }
-    img { max-width: 40mm !important; max-height: 18mm !important; object-fit: contain !important; }
+    img { max-width: 70mm !important; max-height: 36mm !important; object-fit: contain !important; }
 }
 
 .mobile-nav { display: none; }
